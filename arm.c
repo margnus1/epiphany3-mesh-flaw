@@ -14,28 +14,31 @@ e_epiphany_t workgroup;
 e_mem_t      memory;
 
 #define EXTERNAL_BASE    0x8e000000
-#define READ(PTR) read_mem(PTR)
-int read_mem(volatile void *ptr) {
+#define READ(CORENO, PTR) read_mem(CORENO, PTR)
+int read_mem(int coreno, volatile void *ptr) {
     int word;
     ssize_t amount;
     if ((unsigned)ptr > EXTERNAL_BASE) {
 	amount = e_read(&memory, 0, 0, (off_t)ptr - EXTERNAL_BASE, &word,
 			sizeof(word));
     } else {
-	amount = e_read(&workgroup, 0, 0, (off_t)ptr, &word, sizeof(word));
+	int row, col;
+	e_get_coords_from_num(&workgroup, coreno, &row, &col);
+	amount = e_read(&workgroup, row, col, (off_t)ptr, &word, sizeof(word));
     }
     assert(amount == sizeof(word));
     return word;
 }
 
-//#define WRITE(PTR, DATA) ee_write_word(&memory, 0, 0, ((unsigned)PTR) - EXTERNAL_BASE, DATA)
-#define WRITE(PTR, DATA) write_mem(PTR, DATA)
-void write_mem(volatile void *ptr, int data) {
+#define WRITE(CORENO, PTR, DATA) write_mem(CORENO, PTR, DATA)
+void write_mem(int coreno, volatile void *ptr, int data) {
     ssize_t amount;
     if ((unsigned)ptr > EXTERNAL_BASE) {
 	amount = e_write(&memory, 0, 0, (off_t)ptr - EXTERNAL_BASE, &data,
 			 sizeof(data));
     } else {
+	int row, col;
+	e_get_coords_from_num(&workgroup, coreno, &row, &col);
 	amount = e_read(&workgroup, 0, 0, (off_t)ptr, &data, sizeof(data));
     }
     assert(amount == sizeof(data));
@@ -51,13 +54,7 @@ void cleanup() {
 
 int memory_online = 0;
 void exit_with(const char *msg, int status) {
-    /* if (memory_online) */
-    /* 	fprintf(stderr, */
-    /* 		"%sread=%d, write=%d, flag=%d, pc=%#x, status=%#x\n", */
-    /* 		msg, */
-    /* 		READ(MAILBOX_READ_PTR), READ(MAILBOX_WRITE_PTR), */
-    /* 		READ(EVENT_FLAG_PTR), READ(E_REG_PC), READ(E_REG_STATUS)); */
-    /* else  */fprintf(stderr, "%s\n", msg);
+    fprintf(stderr, "%s\n", msg);
     cleanup();
     exit(status);
 }
@@ -69,9 +66,17 @@ void interrupted() {
 #define WIDTH 4
 #define HEIGHT 4
 #define COUNT (WIDTH*HEIGHT)
+volatile struct counter *get_mem(int core) {
+#if TEST_SHARED_MEMORY
+    return &INCREMENT_VECTOR_ADDR[core * INCREMENT_CORE_STEP];
+#else
+    return INCREMENT_VECTOR_ADDR;
+#endif
+}
+
 void zero_vector() {
     for (int i = 0; i < COUNT; i++) {
-	WRITE(INCREMENT_VECTOR_ADDR + i * INCREMENT_CORE_STEP, 0);
+	WRITE(i, &get_mem(i)->counter, 0);
     }
     BARRIER();
 }
@@ -79,14 +84,14 @@ void zero_vector() {
 int check_for_result() {
     int done = 0, result = 0;
     for (int i = 0; i < COUNT; i++) {
-	int val = READ(INCREMENT_VECTOR_ADDR + i * INCREMENT_CORE_STEP);
+	volatile struct counter *mem = get_mem(i);
+	int val = READ(i, &mem->counter);
 	printf("%10d ", val);
 	if (val < 0) {
 	    result = i;
-	    printf(" (%d)", READ(INCREMENT_VECTOR_ADDR
-				 + i * INCREMENT_CORE_STEP + 1));
+	    printf(" (%d)", READ(i, &mem->actual));
 	}
-	if (val == INT_MAX) done++;
+	if (val == INT_MAX - 1) done++;
     }
     printf("\n");
     if (done == COUNT) result = -1;
@@ -114,6 +119,8 @@ int main(int argc, char *argv[]) {
     ret = e_alloc(&memory, 0, 0x02000000 - 4);
     if (ret != E_OK) { perror("e_alloc"); cleanup(); return 1; }
     memory_online = 1;
+
+    fprintf(stderr, "Testing address %p\n", get_mem(0));
 
     zero_vector();
 
