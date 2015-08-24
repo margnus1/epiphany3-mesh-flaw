@@ -39,12 +39,10 @@ void write_mem(int coreno, volatile void *ptr, int data) {
     } else {
 	int row, col;
 	e_get_coords_from_num(&workgroup, coreno, &row, &col);
-	amount = e_read(&workgroup, 0, 0, (off_t)ptr, &data, sizeof(data));
+	amount = e_read(&workgroup, row, col, (off_t)ptr, &data, sizeof(data));
     }
     assert(amount == sizeof(data));
 }
-
-const time_t TIMEOUT = 2;
 
 void cleanup() {
     int ret;
@@ -70,6 +68,10 @@ volatile struct counter *get_mem(int core) {
 #if TEST_SHARED_MEMORY
     return &INCREMENT_VECTOR_ADDR[core * INCREMENT_CORE_STEP];
 #else
+    /*
+     * We don't need to repeat the coordinate mirroring here; it's not important
+     * what order we read the data.
+     */
     return INCREMENT_VECTOR_ADDR;
 #endif
 }
@@ -81,14 +83,19 @@ void zero_vector() {
     BARRIER();
 }
 
+/*
+ * Return -1 if all cores are done and OK.
+ * Return i+1 if core i detected a problem.
+ */
 int check_for_result() {
     int done = 0, result = 0;
     for (int i = 0; i < COUNT; i++) {
 	volatile struct counter *mem = get_mem(i);
 	int val = READ(i, &mem->counter);
 	printf("%10d ", val);
+	/* The cores set mem->counter to -i when they detect a problem */
 	if (val < 0) {
-	    result = i;
+	    result = i+1;
 	    printf(" (%d)", READ(i, &mem->actual));
 	}
 	if (val == INT_MAX - 1) done++;
@@ -130,9 +137,9 @@ int main(int argc, char *argv[]) {
     while(1) {
 	int r = check_for_result();
 	if (r > 0) {
-	    exit_with("A core detected a memory inconsistency ", r);
+	    exit_with("A core detected a memory inconsistency", r);
 	} else if (r < 0) {
-	    exit_with("All cores finished OK ", 0);
+	    exit_with("All cores finished OK", 0);
 	}
 	sleep(1);
     }
