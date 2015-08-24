@@ -29,6 +29,11 @@ How to run it
 
     make && ./arm fast.srec
 
+If you're running a really old disk image for the Parallella, you might need to
+run it with sudo instead:
+
+    make && sudo -E LD_LIBRARY_PATH=$LD_LIBRARY_PATH ./arm fast.srec
+
 To test shared memory instead, please modify `address.h`.
 
 The program will terminate either when an inconsistency is found, or when all

@@ -16,6 +16,11 @@ fast.elf: epiphany.c *.h
 %.srec: %.elf
 	e-objcopy --srec-forceS3 --output-target srec $< $@
 
+# Detect if -le-loader exists (and thus is needed)
+ifneq ($(wildcard /opt/adapteva/esdk/tools/host/lib/libe-loader.so),)
+LOADER_LIB=-le-loader
+endif
+
 arm: arm.c *.h
-	gcc -o $@ $< -L$(EPIPHANY_HOME)/tools/host/lib -le-hal -le-loader \
+	gcc -o $@ $< -L$(EPIPHANY_HOME)/tools/host/lib -le-hal $(LOADER_LIB) \
 		-I$(EPIPHANY_HOME)/tools/host/include --std=c11 -O2 -g
